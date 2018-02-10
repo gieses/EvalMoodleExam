@@ -131,12 +131,17 @@ def compute_points_mc(df_types, df_details):
 # =============================================================================
 #set the filenames here
 #this file is manually created and contains the question types (MC, Lueckentext, etc)
+#example:
+#Aufgabe	Typ	Gebiet
+#1	Lueckentext	Chromatographie
 exam_question_types = "FragenTypen.csv"
 
 #this file contains the points as determined by ISIS
+#(needs to be exported from moodle)
 exam_details = "[intern] Bioanalytik 2-Bioanalytik II Zwischentest - WiSe 1718-Antworten.csv"
 
 #this file contains the detailed answers or each question
+#(needs to be exported from moodle)
 exam_points = "[intern] Bioanalytik 2-Bioanalytik II Zwischentest - WiSe 1718-Bewertungen.csv"
 
 

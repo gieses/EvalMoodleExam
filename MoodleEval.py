@@ -8,6 +8,7 @@ Created on Fri Dec  8 11:32:09 2017
 import pandas as pd
 import numpy as np
 import datetime
+import re
 import sys
 
 def eval_answer(truth, guess, max_points=1):
@@ -214,7 +215,145 @@ def test_evalution():
     points = eval_answer(truth, set(["A","B", "C", "D"]))
     verbose_test(exp_points, points)
 
+#%% point computations  
+def compute_points_mc(df_types, df_details, max_points=1, 
+                      special_treatment=False, testname=""):
+    """
+    Computes the points for each student from the MC questions.
+    The following grading scheme is applied for 4 questions:
+        
+    4 correct: 1 Point
+    3 correct: 2/3 Point
+    2 correct: 1/3 Point
+    1 correct: 0 Point
+    0 correct: 0 Point
+    
+    Parameters:
+    --------------
+    df_types: df,
+             a dataframe which contains at least two columsn "Typ", "Aufgabe".
+             Aufgabe is the EXACT same number of the question as in ISIS!
+             Typ is a description of the question type ("MC", "Lueckentext",
+             "Drag and Drop", etc.)
+             
+    df_details: df,
+             a dataframe that can be exported from ISIS and contains all the
+             detailed questions and answers from ISIS.
+    
+    max_points: float,
+                maximum number of points per MC question
+    """
+    df_types_mc = df_types[df_types["Typ"] == "MC"]
+    n_questions_cm = df_types_mc.shape[0]
+    numbers =  df_types_mc["Aufgabe"] #.iloc[[0]]
+    
+    cols0 = ["0idx", u'Nachname', u'Vorname', u'Institution', u'Abteilung',
+             u'E-Mail-Adresse', u'Status', u'Begonnen am', u'Beendet',
+             u'Verbrauchte Zeit']
+    cols1 = ["Frage {}".format(i) for i in numbers]
+    cols2 = ["Antwort {}".format(i) for i in numbers]
+    cols3 = ["Richtige Antwort {}".format(i) for i in numbers]
+    all_cols = cols0 + cols1 + cols2  + cols3
+    df_mc = df_details[all_cols]
+    
+    points_dic = {"Punkte {} ({} Pkt) (MC)".format(str(i).zfill(2), max_points):[] for i in numbers}
+    #iterate over students
+    for studenti, rowi in df_mc.groupby("0idx"):
+#        break
+        #iteate over questions
+        for questioni in numbers:
+            #print (studenti, questioni, rowi)
+#            if questioni == 15:
+#                break
+            #extract the dataframe entries into variables
+            question = rowi["Frage {}".format(questioni)].values[0]
+            
+            answer = rowi["Antwort {}".format(questioni)].values[0]
+            answer = set([i.strip() for i in answer.split(";")])
+                        
+            correct_answer = rowi["Richtige Antwort {}".format(questioni)].values[0]
+            correct_answer = set([i.strip() for i in correct_answer.split(";")])
+            
+            #get the points
+            nmistakes = get_wrong(answer, correct_answer)
+            points = get_points(nmistakes, max_points)
 
+            # =================================================================
+            # START - SPECIAL HARD CODED STUFF FOR EXAM QUESTIONS...
+            # =================================================================
+            #treatment of special questions
+            #overwrites the points from above
+            
+            if special_treatment and testname=="Zwischentest":              
+                if questioni == 16:
+                    points = max_points
+                
+                if questioni == 47:
+                    answer = rowi["Antwort {}".format(questioni)].values[0]
+                    answer = set([i.strip() for i in answer.split(";")])
+                    
+                    fullpoints1 = set(["Kupfersulfat (Biuret Assay)"])
+                    fullpoints2 = set(["Kupfersulfat (Biuret Assay)", "Coomassie"])
+                    
+                    points = points_decision_helper(answer, fullpoints1, 
+                                                    fullpoints2, max_points)
+            
+            # special treatment for Abschlusstest
+            if special_treatment and testname=="Abschlusstest":     
+                answer = rowi["Antwort {}".format(questioni)].values[0]
+                answer = set([i.strip() for i in answer.split(";")])                
+                if questioni == 25:                         
+                    fullpoints1 = set(['Eine Full-Mass Scan Analyse im positiven oder negativen Modus lässt jeweils unterschiedliche Lipide in den Spektren identifizieren.',
+                                       'Bei der MS/MS CID von Lipiden kommt es zu vielen Brüchen zwischen den Kohlenstoffatomen, so dass die Fragmente ein komplexes Fragment-Spektrum ergeben.',
+                                       'Mit einer MALDI-TOF Analyse können Lipide in Gewebeschnitten lokalisiert werden.',
+                                       'In GC/MS und LC/MS werden Lipide anders ionisiert.'])
+                                                
+                    fullpoints2 = set(['Eine Full-Mass Scan Analyse im positiven oder negativen Modus lässt jeweils unterschiedliche Lipide in den Spektren identifizieren.',
+                                        'Mit einer MALDI-TOF Analyse können Lipide in Gewebeschnitten lokalisiert werden.',
+                                        'In GC/MS und LC/MS werden Lipide anders ionisiert.'])
+                    points = points_decision_helper(answer, fullpoints1, 
+                                                    fullpoints2, max_points)
+                if questioni == 16:
+                    break
+                    fullpoints1 = set(['NGS-Methoden eignen sich zur Sequenzierung von DNA, RNA und Proteinen.',
+                                       'Die DNA muss isoliert werden und wird dann amplifiziert.',
+                                       'NGS-Methoden haben durch Parallelisierung einen höheren Durchsatz als die Sangermethode.'])
+                                                
+                    fullpoints2 = set(['Die DNA muss isoliert werden und wird dann amplifiziert.',
+                                       'NGS-Methoden haben durch Parallelisierung einen höheren Durchsatz als die Sangermethode.'])
+                    
+                    points = points_decision_helper(answer, fullpoints1, 
+                                                    fullpoints2, max_points)
+            # =================================================================
+            # END - SPECIAL HARD CODED STUFF FOR EXAM QUESTIONS...
+            # =================================================================                        
+#                    print (answer),
+#                    print (points)
+            points_dic["Punkte {} ({} Pkt) (MC)".format(str(questioni).zfill(2), 
+                       max_points)].append(points)
+    df_points = pd.DataFrame(points_dic)
+    df_points["Summe_MC"] = df_points.sum(axis=1)
+    pd.concat([df_mc[cols0], df_points], axis=1)
+    return(df_points, n_questions_cm)
+    
+    
+def points_decision_helper(answer, fullpoints1, fullpoints2, max_points):
+    """
+    Gets the maximal number of points for the students based on two
+    sets of possible answers.
+    """
+    if (answer == fullpoints1) or (answer == fullpoints2):
+        points = 1
+    else:
+        nmistakes1 = get_wrong(answer, fullpoints1)
+        points1 = get_points(nmistakes1, max_points)
+    
+        nmistakes2 = get_wrong(answer, fullpoints2)
+        points2 = get_points(nmistakes2, max_points)
+    
+        points = np.max([points1, points2])
+    return(points)
+    
     
 def compute_points_non_mc(df_types, df_points):
     """
@@ -283,110 +422,215 @@ def get_wrong(answer, correct_answer):
     
     nmistakes = nwrong + nmissing
     return(nmistakes)
-    
-def compute_points_mc(df_types, df_details, max_points=1, 
-                      special_treatment=False):
+
+
+#%% special corrections, manually implemented
+def fluoreszenz_special_get_new_points(df_details, df_points):
     """
-    Computes the points for each student from the MC questions.
-    The following grading scheme is applied for 4 questions:
+    Computes the number of points to be added to the students points.
+    """
+    points_column_name = df_points.filter(regex="F 13", axis=1).columns[0]
+    p = float(re.search("F \d+ \/(.*)", points_column_name).groups()[0].replace(",", "."))
+    max_answers = df_details["Antwort 13"].apply(special_get_max_answers).max()
+    points_per_answer = p / max_answers
+    new_points_abs = points_per_answer * df_details["Antwort 13"].apply(fluoreszenz_special, args=["Absorptionsfilter"])
+    return(new_points_abs)
         
-    4 correct: 1 Point
-    3 correct: 2/3 Point
-    2 correct: 1/3 Point
-    1 correct: 0 Point
-    0 correct: 0 Point
-    
-    Parameters:
-    --------------
-    df_types: df,
-             a dataframe which contains at least two columsn "Typ", "Aufgabe".
-             Aufgabe is the EXACT same number of the question as in ISIS!
-             Typ is a description of the question type ("MC", "Lueckentext",
-             "Drag and Drop", etc.)
-             
-    df_details: df,
-             a dataframe that can be exported from ISIS and contains all the
-             detailed questions and answers from ISIS.
-    
-    max_points: float,
-                maximum number of points per MC question
+def fluoreszenz_special(answer, filterstr="Absorptionsfilter", verbose=False):
     """
-    df_types_mc = df_types[df_types["Typ"] == "MC"]
-    n_questions_cm = df_types_mc.shape[0]
-    numbers =  df_types_mc["Aufgabe"] #.iloc[[0]]
+    questions = df_details["Frage 13"]    
+    question = questions[0]
+    answers = df_details["Antwort 13"]    
+    answer = answer[0]    
+    """    
     
-    cols0 = ["0idx", u'Nachname', u'Vorname', u'Institution', u'Abteilung',
-             u'E-Mail-Adresse', u'Status', u'Begonnen am', u'Beendet',
-             u'Verbrauchte Zeit']
-    cols1 = ["Frage {}".format(i) for i in numbers]
-    cols2 = ["Antwort {}".format(i) for i in numbers]
-    cols3 = ["Richtige Antwort {}".format(i) for i in numbers]
-    all_cols = cols0 + cols1 + cols2  + cols3
-    df_mc = df_details[all_cols]
+    answer_dic = special_get_answer_dic(answer)
+    if verbose:
+        print ("################################")    
+        print (answer_dic["Dropzone 2"])
+    got_point = 0
+#    if "Monochromator" in answer_dic["Dropzone 2"]:
+#        got_point = True
+    if filterstr in answer_dic["Dropzone 2"]:
+        got_point = 1
+        
+    return(got_point)
     
-    points_dic = {"Punkte {} ({} Pkt) (MC)".format(str(i).zfill(2), max_points):[] for i in numbers}
-    #iterate over students
-    for studenti, rowi in df_mc.groupby("0idx"):
-        #iteate over questions
-        for questioni in numbers:
-            #print (studenti, questioni, rowi)
-#            if questioni == 15:
-#                break
-            #extract the dataframe entries into variables
-            question = rowi["Frage {}".format(questioni)].values[0]
+
+def ladung_peptide(df_details, df_points):
+    """
+    Correct "0" to 0 .... since an ambigous description was given.
+    """
+    qnumber = 40
+    newpoints = []
+    #answer = df_details["Antwort 40"].iloc[2]
+    points_per_answer = special_get_points_factor(df_points, df_details, qnumber, "Freitext")
+    #correct parsing and scoring
+    correct_answers = {'Teil 1': '+1', 
+                       'Teil 2': '+1', 
+                       'Teil 3': '0', 
+                       'Teil 4': '+2'}      
+    #iterate over dataframe   
+    for idx, rowi in df_details.iterrows():
+        #retrieve 
+#        question = rowi["Frage {}".format(qnumber)]
+        answer = rowi["Antwort {}".format(qnumber)]
+        answer_dic = special_get_answer_dic(answer, "Freitext")
+        points = 0
+        #rescore
+        for key, value in answer_dic.items():
+            answer_dic[key] = value.replace('\"', "")
+            if answer_dic[key] == correct_answers[key]:
+                points += 1
+        newpoints.append(points*points_per_answer)
+        
+    #combine old and newpoints
+    newpoints = np.array(newpoints)
+    old_points = special_get_old_points(df_points, qnumber)
+    additional_points = newpoints - old_points
+    additional_points = np.array([0 if i <= 0.006 else i for i in additional_points])
+    return(additional_points)
+    
+def fluoreszenz_text(df_details, df_points):
+    """
+    In this question the definition of quenching and FRET should be adjusted.
+    """
+    qnumber = 14
+    newpoints = []
+    points_per_answer = special_get_points_factor(df_points, df_details, qnumber, "Zuordnung")
+    key = "Das Signal eines Fluorophores wird unterbunden, indem die Energie auf ein anderes Molekül übertragen wird."    
+    #iterate over dataframe   
+    for idx, rowi in df_details.iterrows():
+        question = rowi["Frage {}".format(qnumber)]
+        answer = rowi["Antwort {}".format(qnumber)]
+        answer_dic = special_get_answer_dic(answer, "Zuordnung")
+        points = 0
+        if answer_dic[key] in ['Quenching', 'FRET']:
+            points += 1  
+        newpoints.append(points*points_per_answer)
+        
+    #combine old and newpoints
+    newpoints = np.array(newpoints)
+    old_points = special_get_old_points(df_points, qnumber)
+    additional_points = newpoints - old_points
+    additional_points = np.array([0 if i <= 0.006 else i for i in additional_points])
+    return(additional_points)
+     
+    
+def aufbau_mass_spec(df_details, df_points):
+    """
+    This question had an ambigous arrangement of the images of the mass spec.
+    As a result we have to consider two orders of answers (from left to right,
+    and from right to left)
+    """
+    qnumber = 5
+    newpoints = []
+    points_per_answer = special_get_points_factor(df_points, df_details, qnumber)
+    #iterate over dataframe
+    for idx, rowi in df_details.iterrows():
+        question = rowi["Frage {}".format(qnumber)]
+        answer = rowi["Antwort {}".format(qnumber)]
+        answer_dic = special_get_answer_dic(answer)
+        points = 0
+        if answer_dic["Dropzone 1"] in ['1. Ionenquelle', '3. Detektor']:
+            points += 1
+        
+        if answer_dic["Dropzone 2"] in ['2. Massenanalysator']:
+            points += 1        
+        
+        if answer_dic["Dropzone 3"] in ['1. Ionenquelle', '3. Detektor']:
+            points += 1      
             
-            answer = rowi["Antwort {}".format(questioni)].values[0]
-            answer = set([i.strip() for i in answer.split(";")])
-                        
-            correct_answer = rowi["Richtige Antwort {}".format(questioni)].values[0]
-            correct_answer = set([i.strip() for i in correct_answer.split(";")])
-            
-            #get the points
-            nmistakes = get_wrong(answer, correct_answer)
-            points = get_points(nmistakes, max_points)
-
-            # =================================================================
-            # START - SPECIAL HARD CODED STUFF FOR EXAM QUESTIONS...
-            # =================================================================
-            #treatment of special questions
-            if special_treatment:
-                if questioni == 16:
-                    points = 1
-                
-                if questioni == 47:
-                    answer = rowi["Antwort {}".format(questioni)].values[0]
-                    answer = set([i.strip() for i in answer.split(";")])
-                    
-                    fullpoints1 = set(["Kupfersulfat (Biuret Assay)"])
-                    fullpoints2 = set(["Kupfersulfat (Biuret Assay)", "Coomassie"])
-                    
-                    if (answer == fullpoints1) or (answer == fullpoints2):
-                        points = 1
-                    else:
-                        nmistakes1 = get_wrong(answer, fullpoints1)
-                        points1 = get_points(nmistakes1, max_points)
+        if answer_dic["Dropzone 4"] in ['4. Ionenerzeugung', '6. Ionennachweis']:
+            points += 1
+        
+        if answer_dic["Dropzone 5"] in ['5. Ionentrennung']:
+            points += 1        
+        
+        if answer_dic["Dropzone 6"] in ['4. Ionenerzeugung', '6. Ionennachweis']:
+            points += 1     
+        newpoints.append(points*points_per_answer)
     
-                        nmistakes2 = get_wrong(answer, fullpoints2)
-                        points2 = get_points(nmistakes2, max_points)
-    
-                        points = np.max([points1, points2])                    
-            # =================================================================
-            # END - SPECIAL HARD CODED STUFF FOR EXAM QUESTIONS...
-            # =================================================================                        
-#                    print (answer),
-#                    print (points)
-            points_dic["Punkte {} ({} Pkt) (MC)".format(str(questioni).zfill(2), 
-                       max_points)].append(points)
-
-    df_points = pd.DataFrame(points_dic)
-    df_points["Summe_MC"] = df_points.sum(axis=1)
-    pd.concat([df_mc[cols0], df_points], axis=1)
-    return(df_points, n_questions_cm)
+    #combine old and newpoints
+    newpoints = np.array(newpoints)
+    old_points = special_get_old_points(df_points, qnumber)
+    additional_points = newpoints - old_points
+    additional_points = np.array([0 if i <= 0.006 else i for i in additional_points])
+    return(additional_points)
     
 
+#%% generic helpers
+def special_get_points_factor(df_points, df_details, qnumber, type_a="Dropzone"):
+    """
+    Retrieves the factor that is used to multiply the final point counts
+    """
+    max_answers = np.max([special_get_max_answers(i, type_a) for i in df_details["Antwort {}".format(qnumber)]])
+    max_points = special_get_max_points(df_points, 5)
+    points_per_answer = max_points / max_answers
+    return(points_per_answer)    
+    
+    
+def special_get_max_points(df_points, qnumber):
+    """
+    Retrieve the number of points from the column header
+    """
+    points_column_name = df_points.filter(regex="F {}".format(qnumber), axis=1).columns[0]
+    p = float(re.search("F \d+ \/(.*)", points_column_name).groups()[0].replace(",", "."))    
+    return(p)
+    
+    
+def special_get_old_points(df_points, qnumber):
+    """
+    Retrieve the number of points from the column header
+    """
+    points_column_name = df_points.filter(regex="F {}".format(qnumber), axis=1).columns[0]
+    points = np.array([float(str(i).replace(",", ".").replace("-","0")) for i in df_points[points_column_name]])
+    return(points)
+    
 
+def special_get_max_answers(answer, type_a="Dropzone"):
+    """
+    Get the number of dropzones / points for this answer
+    """
+    if type_a == "Dropzone":
+        nanswers = len(re.findall(r"(Dropzone \d+) \-\> \{([^\}]+)\}", answer))
+    
+    elif type_a == "Zuordnung":
+        nanswers = answer.count("->")
+        
+    elif type_a == "Freitext":
+        nanswers = answer.count(";") + 1
+    
+    else:
+        print ("Answertype not supported (max_answer)")
+        print (type_a)
+        sys.exit()        
+    return(nanswers)
+
+
+def special_get_answer_dic(answer, type_a="Dropzone"):
+    """
+    """
+    if type_a == "Dropzone":
+        found = re.findall(r"(Dropzone \d+) \-\> \{([^\}]+)\}", answer)    
+        answer_dic = {i:j for i,j in found}
+        
+    elif type_a == "Zuordnung":
+        splitted = answer.split(";")
+        found = [(i.split("->")[0].strip(), i.split("->")[1].strip()) for i in splitted]
+        answer_dic = {i:j for i,j in found}
+    elif type_a == "Freitext":
+        splitted = answer.split(";")
+        found = [(i.split(":")[0].strip(), i.split(":")[1].strip()) for i in splitted]
+        answer_dic = {i:j for i,j in found}        
+    else:
+        print ("Answertype not supported (answer_dic)")
+        print (type_a)        
+        sys.exit()
+    return(answer_dic)
+#%% main runner function
 def evaluate_exam(exam_question_types, exam_details, exam_points, outname, 
-                  max_points, special_treatment=False):
+                  max_points, special_treatment_MC=False, special_treatment_OT=False):
     """
     
     Evaluates an ISIS exam based on the exports given from the system.
@@ -436,12 +680,12 @@ def evaluate_exam(exam_question_types, exam_details, exam_points, outname,
     #Zwischentest = 1
     max_points = 0.79
     """
-    if special_treatment:
-        print ("!!!!Special Treatment is NOT active!!!!!")
+    if special_treatment_MC:
+        print ("!!!!Special Treatment is active for MC !!!!!")
     else:
-        print ("!!!!Special Treatment IS active!!!!!")
-        
+        print ("!!!!Special Treatment is NOT active for MC!!!!!")
     #name of the output file
+    testname = outname
     outname += "_" + datetime.date.today().strftime("%m%d%y")
 
     #%% run the evaluation
@@ -471,11 +715,13 @@ def evaluate_exam(exam_question_types, exam_details, exam_points, outname,
     df_points["0idx"] = idx
     df_details["0idx"] = idx
     
-    
+ 
+        
     points_other, nquestions_other = compute_points_non_mc(df_types, df_points)
     points_mc, nquestions_mc = compute_points_mc(df_types, df_details, 
                                                  max_points=max_points,
-                                                 special_treatment=special_treatment)
+                                                 special_treatment=special_treatment_MC,
+                                                 testname=testname)
     
     details_cols = ["0idx", u'Nachname', u'Vorname', u'Institution', 
                          u'Abteilung', u'E-Mail-Adresse', u'Status', 
@@ -483,7 +729,8 @@ def evaluate_exam(exam_question_types, exam_details, exam_points, outname,
     
     details = df_points[details_cols]
     details.columns = ["0_"+str(i) for i in details.columns]
-    
+    #deal with special stuff
+        
     if "Matrikelnummer" in df_details["Frage 1"].iloc[0]:
         print ("Found Matrikelnummer! Will be added to final dataframe!")
         matrikel_df = df_details[["0idx", "Antwort 1"]]
@@ -493,14 +740,30 @@ def evaluate_exam(exam_question_types, exam_details, exam_points, outname,
         #details_cols.append("Antwort 1")
     else:
         print ("""Attention! There was no Matrikelnummer in Question 1! Data will
-                   be returned with this information!""")
+                   be returned without this information!""")
         all_points = pd.concat([details, points_other, points_mc], axis=1)
-    
     
     
     all_points = all_points[sorted(all_points.columns)]
     all_points["Summe_Total"] = all_points["Summe_MC"] + all_points["Summe_Other"]#
     all_points["Summe_Total_Round"] = np.round(all_points["Summe_Total"], 1)
+    #%%
+    if special_treatment_OT:
+        if testname == "Zwischentest":
+            temp_new_points = fluoreszenz_special_get_new_points(df_details, df_points)      
+            all_points["Punkte 99 (AdditionalPoints)"] = temp_new_points
+            all_points["Summe_Total_(add)"] = all_points["Summe_Total"] + all_points["Punkte 99 (AdditionalPoints)"]
+            
+        elif testname == "Abschlusstest":
+            additional_massspec_p = aufbau_mass_spec(df_details, df_points)
+            additional_fluores = fluoreszenz_text(df_details, df_points)
+            additional_ladung = ladung_peptide(df_details, df_points)
+            temp_new_points = additional_massspec_p + additional_fluores + additional_ladung
+            all_points["Punkte 99 (AdditionalPoints)"] = temp_new_points
+            all_points["Summe_Total_(add)"] = all_points["Summe_Total"] + all_points["Punkte 99 (AdditionalPoints)"]            
+        else:
+            print ("No answers coded for the given testname")
+            sys.exit()
     print ("The Exam contained:")
     print ("{} multiple choice questions".format(nquestions_mc))
     print ("{} 'other type' questions".format(nquestions_other))
@@ -508,6 +771,8 @@ def evaluate_exam(exam_question_types, exam_details, exam_points, outname,
     print ("Max. Punkte: {}".format(all_points["Summe_Total_Round"].max()))
     print ("Min. Punkte: {}".format(all_points["Summe_Total_Round"].min()))
     print ("#####################################################################")
+      
+        
     #final task store the results
     all_points.to_excel("Ergebnisse_"+outname+".xlsx")
 # =============================================================================
@@ -515,32 +780,37 @@ def evaluate_exam(exam_question_types, exam_details, exam_points, outname,
 # =============================================================================
 #%% set filenames and settings
     
-    
 def run():
+    sys.exit()
     #Zwischentest
-    special_treatment = False
+    special_treatment_MC = False
+    special_treatment_OT = True
     exam_question_types = "FragenTypen_Zwischentest.csv"
     exam_details = "[WiSe1718] BAII-Zwischentest - WiSe 1718-Antworten.csv"
     exam_points = "[WiSe1718] BAII-Zwischentest - WiSe 1718-Bewertungen.csv"
     evaluate_exam(exam_question_types, exam_details, exam_points, "Zwischentest",
-                  1, special_treatment)
+                  1, special_treatment_MC, special_treatment_OT)
     
+       
     
     #Zulassungstest
-    special_treatment = False
-    exam_question_types = "FragenTypen_Zulassungstest.csv"
-    exam_details = "[WiSe1718] BAII-Zulassungstest - WiSe 1718-Antworten.csv"
-    exam_points = "[WiSe1718] BAII-Zulassungstest - WiSe 1718-Bewertungen.csv"
-    evaluate_exam(exam_question_types, exam_details, exam_points, "Zulassungstest",
-                  0.38, special_treatment)
+#    special_treatment = False
+#    exam_question_types = "FragenTypen_Zulassungstest.csv"
+#    exam_details = "[WiSe1718] BAII-Zulassungstest - WiSe 1718-Antworten.csv"
+#    exam_points = "[WiSe1718] BAII-Zulassungstest - WiSe 1718-Bewertungen.csv"
+#    evaluate_exam(exam_question_types, exam_details, exam_points, "Zulassungstest",
+#                  0.38, special_treatment)
     
     #Abschlusstest
-    special_treatment = True
+    special_treatment_MC = True
+    special_treatment_OT = True
     exam_question_types = "FragenTypen_Abschlusstest.csv"
     exam_details = "[WiSe1718] BAII-Abschlusstest - WiSe 1718-Antworten.csv"
     exam_points = "[WiSe1718] BAII-Abschlusstest - WiSe 1718-Bewertungen.csv"
-    evaluate_exam(exam_question_types, exam_details, exam_points, "Abschlusstest",
-                  0.79, special_treatment)
+    outname = "Abschlusstest"
+    max_points = 0.79
+    evaluate_exam(exam_question_types, exam_details, exam_points, outname,
+                  max_points, special_treatment_MC, special_treatment_OT)
 
 
 
